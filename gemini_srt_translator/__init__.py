@@ -156,8 +156,8 @@ def translate():
     # (Optional) Additional description of the translation task
     gst.description = "This subtitle is from a TV Series called 'Friends'."
 
-    # (Optional) Model name to use for translation (default: "gemini-2.5-flash-preview-05-20")
-    gst.model_name = "gemini-2.5-flash-preview-05-20"
+    # (Optional) Model name to use for translation (default: "gemini-2.5-flash")
+    gst.model_name = "gemini-2.5-flash"
 
     # (Optional) Batch size for translation (default: 300)
     gst.batch_size = 300

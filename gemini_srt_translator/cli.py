@@ -75,7 +75,8 @@ def cmd_translate(args) -> None:
         sys.exit(1)
 
     # Set target language
-    gst.target_language = args.target_language or input("Enter target language: ").strip()
+    #gst.target_language = args.target_language or input("Enter target language: ").strip()
+    gst.target_language = args.target_language or "Korean"
 
     # Model selection
     if args.model:

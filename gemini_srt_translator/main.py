@@ -71,7 +71,7 @@ class GeminiSRTTranslator:
         extract_audio: bool = False,
         start_line: int = None,
         description: str = None,
-        model_name: str = "gemini-2.5-flash-preview-05-20",
+        model_name: str = "gemini-2.5-flash",
         batch_size: int = 300,
         streaming: bool = True,
         thinking: bool = True,
@@ -109,6 +109,8 @@ class GeminiSRTTranslator:
             progress_log (bool): Whether to log progress to a file
             thoughts_log (bool): Whether to log thoughts to a file
         """
+
+        highlight(f"GeminiSRTTranslator (modified for Korean)")
 
         base_file = input_file or video_file
         base_name = os.path.splitext(os.path.basename(base_file))[0] if base_file else "translated"
