@@ -14,6 +14,7 @@ from google import genai
 from google.genai import types
 from google.genai.types import Content
 from srt import Subtitle
+from openai import OpenAI
 
 from gemini_srt_translator.logger import (
     error,
@@ -63,6 +64,8 @@ class GeminiSRTTranslator:
         self,
         gemini_api_key: str = None,
         gemini_api_key2: str = None,
+        openai_api_key: str = None,
+        provider: str = "gemini",
         target_language: str = None,
         input_file: str = None,
         output_file: str = None,
@@ -91,6 +94,8 @@ class GeminiSRTTranslator:
         Args:
             gemini_api_key (str): Primary Gemini API key
             gemini_api_key2 (str): Secondary Gemini API key for additional quota
+            openai_api_key (str): OpenAI API key
+            provider (str): AI provider to use ("gemini" or "openai")
             target_language (str): Target language for translation
             input_file (str): Path to input subtitle file
             output_file (str): Path to output translated subtitle file
@@ -99,7 +104,7 @@ class GeminiSRTTranslator:
             extract_audio (bool): Whether to extract audio from video for translation
             start_line (int): Line number to start translation from
             description (str): Additional instructions for translation
-            model_name (str): Gemini model to use
+            model_name (str): Model to use (Gemini or OpenAI model name)
             batch_size (int): Number of subtitles to process in each batch
             streaming (bool): Whether to use streamed responses
             thinking (bool): Whether to use thinking mode
@@ -133,7 +138,9 @@ class GeminiSRTTranslator:
 
         self.gemini_api_key = gemini_api_key
         self.gemini_api_key2 = gemini_api_key2
-        self.current_api_key = gemini_api_key
+        self.openai_api_key = openai_api_key
+        self.provider = provider
+        self.current_api_key = gemini_api_key if provider == "gemini" else openai_api_key
         self.target_language = target_language
         self.input_file = input_file
         self.video_file = video_file
@@ -170,36 +177,40 @@ class GeminiSRTTranslator:
 
     def _get_config(self):
         """Get the configuration for the translation model."""
-        thinking_compatible = False
-        thinking_budget_compatible = False
-        if "2.5" in self.model_name:
-            thinking_compatible = True
-        if "flash" in self.model_name:
-            thinking_budget_compatible = True
+        if self.provider == "gemini":
+            thinking_compatible = False
+            thinking_budget_compatible = False
+            if "2.5" in self.model_name:
+                thinking_compatible = True
+            if "flash" in self.model_name:
+                thinking_budget_compatible = True
 
-        return types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=get_response_schema(),
-            safety_settings=get_safety_settings(),
-            temperature=self.temperature,
-            top_p=self.top_p,
-            top_k=self.top_k,
-            system_instruction=get_instruction(
-                language=self.target_language,
-                thinking=self.thinking,
-                thinking_compatible=thinking_compatible,
-                audio_file=self.audio_file,
-                description=self.description,
-            ),
-            thinking_config=(
-                types.ThinkingConfig(
-                    include_thoughts=self.thinking,
-                    thinking_budget=self.thinking_budget if thinking_budget_compatible else None,
-                )
-                if thinking_compatible
-                else None
-            ),
-        )
+            return types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=get_response_schema(),
+                safety_settings=get_safety_settings(),
+                temperature=self.temperature,
+                top_p=self.top_p,
+                top_k=self.top_k,
+                system_instruction=get_instruction(
+                    language=self.target_language,
+                    thinking=self.thinking,
+                    thinking_compatible=thinking_compatible,
+                    audio_file=self.audio_file,
+                    description=self.description,
+                ),
+                thinking_config=(
+                    types.ThinkingConfig(
+                        include_thoughts=self.thinking,
+                        thinking_budget=self.thinking_budget if thinking_budget_compatible else None,
+                    )
+                    if thinking_compatible
+                    else None
+                ),
+            )
+        elif self.provider == "openai":
+            # OpenAI는 별도의 config 객체가 필요하지 않음
+            return None
 
     def _check_saved_progress(self):
         """Check if there's a saved progress file and load it if exists"""
@@ -253,19 +264,32 @@ class GeminiSRTTranslator:
             warning_with_progress(f"Failed to save progress: {e}")
 
     def getmodels(self):
-        """Get available Gemini models that support content generation."""
+        """Get available models that support content generation."""
         if not self.current_api_key:
-            error("Please provide a valid Gemini API key.")
+            error(f"Please provide a valid {self.provider.upper()} API key.")
             exit(1)
 
-        client = self._get_client()
-        models = client.models.list()
-        list_models = []
-        for model in models:
-            supported_actions = model.supported_actions
-            if "generateContent" in supported_actions:
-                list_models.append(model.name.replace("models/", ""))
-        return list_models
+        if self.provider == "gemini":
+            client = self._get_client()
+            models = client.models.list()
+            list_models = []
+            for model in models:
+                supported_actions = model.supported_actions
+                if "generateContent" in supported_actions:
+                    list_models.append(model.name.replace("models/", ""))
+            return list_models
+        elif self.provider == "openai":
+            # OpenAI models that support text generation
+            return [
+                "gpt-5",
+                "gpt-5-mini",
+                "gpt-5-nano",
+                "gpt-4o",
+                "gpt-4o-mini", 
+                "gpt-4-turbo",
+                "gpt-4",
+                "gpt-3.5-turbo"
+            ]
 
     def translate(self):
         """
@@ -305,7 +329,7 @@ class GeminiSRTTranslator:
             self.srt_extracted = True
 
         if not self.current_api_key:
-            error("Please provide a valid Gemini API key.", ignore_quiet=True)
+            error(f"Please provide a valid {self.provider.upper()} API key.", ignore_quiet=True)
             exit(1)
 
         if not self.target_language:
@@ -338,11 +362,16 @@ class GeminiSRTTranslator:
 
         self._check_saved_progress()
 
-        models = self.getmodels()
-
-        if self.model_name not in models:
-            error(f"Model {self.model_name} is not available. Please choose a different model.", ignore_quiet=True)
-            exit(1)
+        if self.provider == "gemini":
+            models = self.getmodels()
+            if self.model_name not in models:
+                error(f"Model {self.model_name} is not available. Please choose a different model.", ignore_quiet=True)
+                exit(1)
+        elif self.provider == "openai":
+            models = self.getmodels()
+            if self.model_name not in models:
+                error(f"Model {self.model_name} is not available. Please choose a different model.", ignore_quiet=True)
+                exit(1)
 
         self._get_token_limit()
 
@@ -397,13 +426,20 @@ class GeminiSRTTranslator:
             delay = False
             delay_time = 30
 
-            if "pro" in self.model_name and self.free_quota:
+            if self.provider == "gemini" and "pro" in self.model_name and self.free_quota:
                 delay = True
                 if not self.gemini_api_key2:
                     info("Pro model and free user quota detected.\n")
                 else:
                     delay_time = 15
                     info("Pro model and free user quota detected, using secondary API key if needed.\n")
+            elif self.provider == "openai":
+                # OpenAI는 일반적으로 지연이 필요하지 않음
+                delay = False
+                # OpenAI용 배치 크기 조정 (더 안전한 크기)
+                if self.batch_size > 20:
+                    self.batch_size = 20
+                    info(f"OpenAI detected. Adjusting batch size to {self.batch_size} for better stability.")
 
             i = self.start_line - 1
             total = len(original_subtitle)
@@ -464,8 +500,10 @@ class GeminiSRTTranslator:
             batch.append(SubtitleObject(index=str(i), content=original_subtitle[i].content))
             i += 1
 
-            if self.gemini_api_key2:
+            if self.provider == "gemini" and self.gemini_api_key2:
                 info_with_progress(f"Starting with API Key {self.current_api_number}")
+            elif self.provider == "openai":
+                info_with_progress(f"Using OpenAI API with model {self.model_name}")
 
             def handle_interrupt(signal_received, frame):
                 last_chunk_size = get_last_chunk_size()
@@ -552,18 +590,23 @@ class GeminiSRTTranslator:
                     e_str = str(e)
                     last_chunk_size = get_last_chunk_size()
 
-                    if "quota" in e_str:
-                        current_time = time.time()
-                        if current_time - last_time > 60 and self._switch_api():
-                            highlight_with_progress(
-                                f"API {self.backup_api_number} quota exceeded! Switching to API {self.current_api_number}...",
-                                isSending=True,
-                            )
-                        else:
+                    if "quota" in e_str or "rate limit" in e_str.lower():
+                        if self.provider == "gemini":
+                            current_time = time.time()
+                            if current_time - last_time > 60 and self._switch_api():
+                                highlight_with_progress(
+                                    f"API {self.backup_api_number} quota exceeded! Switching to API {self.current_api_number}...",
+                                    isSending=True,
+                                )
+                            else:
+                                for j in range(60, 0, -1):
+                                    warning_with_progress(f"All API quotas exceeded, waiting {j} seconds...")
+                                    time.sleep(1)
+                            last_time = current_time
+                        elif self.provider == "openai":
                             for j in range(60, 0, -1):
-                                warning_with_progress(f"All API quotas exceeded, waiting {j} seconds...")
+                                warning_with_progress(f"OpenAI rate limit exceeded, waiting {j} seconds...")
                                 time.sleep(1)
-                        last_time = current_time
                     else:
                         i -= self.batch_size
                         j = i + last_chunk_size
@@ -628,27 +671,35 @@ class GeminiSRTTranslator:
         Returns:
             bool: True if switched successfully, False if no alternative API available
         """
-        if self.current_api_number == 1 and self.gemini_api_key2:
-            self.current_api_key = self.gemini_api_key2
-            self.current_api_number = 2
-            self.backup_api_number = 1
-            return True
-        if self.current_api_number == 2 and self.gemini_api_key:
-            self.current_api_key = self.gemini_api_key
-            self.current_api_number = 1
-            self.backup_api_number = 2
-            return True
+        if self.provider == "gemini":
+            if self.current_api_number == 1 and self.gemini_api_key2:
+                self.current_api_key = self.gemini_api_key2
+                self.current_api_number = 2
+                self.backup_api_number = 1
+                return True
+            if self.current_api_number == 2 and self.gemini_api_key:
+                self.current_api_key = self.gemini_api_key
+                self.current_api_number = 1
+                self.backup_api_number = 2
+                return True
+        elif self.provider == "openai":
+            # OpenAI는 API 키 전환 기능 없음
+            return False
         return False
 
-    def _get_client(self) -> genai.Client:
+    def _get_client(self):
         """
-        Configure and return a Gemini client instance.
+        Configure and return a client instance based on provider.
 
         Returns:
-            genai.Client: Configured Gemini client instance
+            genai.Client or OpenAI: Configured client instance
         """
-        client = genai.Client(api_key=self.current_api_key)
-        return client
+        if self.provider == "gemini":
+            client = genai.Client(api_key=self.current_api_key)
+            return client
+        elif self.provider == "openai":
+            client = OpenAI(api_key=self.current_api_key)
+            return client
 
     def _get_token_limit(self):
         """
@@ -657,9 +708,23 @@ class GeminiSRTTranslator:
         Returns:
             int: Token limit for the current model
         """
-        client = self._get_client()
-        model = client.models.get(model=self.model_name)
-        self.token_limit = model.output_token_limit
+        if self.provider == "gemini":
+            client = self._get_client()
+            model = client.models.get(model=self.model_name)
+            self.token_limit = model.output_token_limit
+        elif self.provider == "openai":
+            # OpenAI token limits (approximate)
+            token_limits = {
+                "gpt-5": 128000,
+                "gpt-5-mini": 128000,
+                "gpt-5-nano": 128000,
+                "gpt-4o": 16384,
+                "gpt-4o-mini": 16384,
+                "gpt-4-turbo": 128000,
+                "gpt-4": 8192,
+                "gpt-3.5-turbo": 4096
+            }
+            self.token_limit = token_limits.get(self.model_name, 4096)
 
     def _validate_token_size(self, contents: str) -> bool:
         """
@@ -671,12 +736,20 @@ class GeminiSRTTranslator:
         Returns:
             bool: True if token size is valid, False otherwise
         """
-        client = self._get_client()
-        token_count = client.models.count_tokens(model="gemini-2.0-flash", contents=contents)
-        self.token_count = token_count.total_tokens
-        if token_count.total_tokens > self.token_limit * 0.9:
-            return False
-        return True
+        if self.provider == "gemini":
+            client = self._get_client()
+            token_count = client.models.count_tokens(model="gemini-2.0-flash", contents=contents)
+            self.token_count = token_count.total_tokens
+            if token_count.total_tokens > self.token_limit * 0.9:
+                return False
+            return True
+        elif self.provider == "openai":
+            # OpenAI token counting (approximate)
+            # Rough estimation: 1 token ≈ 4 characters for English
+            self.token_count = len(contents) // 4
+            if self.token_count > self.token_limit * 0.9:
+                return False
+            return True
 
     def _process_batch(
         self,
@@ -686,6 +759,28 @@ class GeminiSRTTranslator:
     ) -> Content:
         """
         Process a batch of subtitles for translation.
+
+        Args:
+            batch (list[SubtitleObject]): Batch of subtitles to translate
+            previous_message (Content): Previous message for context
+            translated_subtitle (list[Subtitle]): List to store translated subtitles
+
+        Returns:
+            Content: The model's response for context in next batch
+        """
+        if self.provider == "gemini":
+            return self._process_batch_gemini(batch, previous_message, translated_subtitle)
+        elif self.provider == "openai":
+            return self._process_batch_openai(batch, previous_message, translated_subtitle)
+
+    def _process_batch_gemini(
+        self,
+        batch: list[SubtitleObject],
+        previous_message: list[Content],
+        translated_subtitle: list[Subtitle],
+    ) -> Content:
+        """
+        Process a batch of subtitles for translation using Gemini API.
 
         Args:
             batch (list[SubtitleObject]): Batch of subtitles to translate
@@ -821,6 +916,212 @@ class GeminiSRTTranslator:
         batch.clear()
         return previous_content
 
+    def _process_batch_openai(
+        self,
+        batch: list[SubtitleObject],
+        previous_message: list[Content],
+        translated_subtitle: list[Subtitle],
+    ) -> Content:
+        """
+        Process a batch of subtitles for translation using OpenAI API.
+
+        Args:
+            batch (list[SubtitleObject]): Batch of subtitles to translate
+            previous_message (Content): Previous message for context
+            translated_subtitle (list[Subtitle]): List to store translated subtitles
+
+        Returns:
+            Content: The model's response for context in next batch
+        """
+        client = self._get_client()
+        
+        # OpenAI용 시스템 메시지 생성
+        system_message = self._get_openai_system_message()
+        
+        # 이전 메시지들을 OpenAI 형식으로 변환
+        messages = [{"role": "system", "content": system_message}]
+        
+        # 이전 대화 컨텍스트 추가 (간단한 형태로)
+        if previous_message:
+            for msg in previous_message[-2:]:  # 최근 2개 메시지만 사용
+                if hasattr(msg, 'role') and hasattr(msg, 'parts'):
+                    role = "user" if msg.role == "user" else "assistant"
+                    content = ""
+                    for part in msg.parts:
+                        if hasattr(part, 'text') and part.text:
+                            content += part.text
+                    if content:
+                        messages.append({"role": role, "content": content})
+        
+        # 현재 배치 메시지 추가 (JSON 형식임을 명시)
+        current_content = f"CRITICAL: You must translate ALL {len(batch)} subtitle objects and return them in the required JSON format with 'subtitles' array. Return format: {{\"subtitles\": [{{\"index\": \"0\", \"content\": \"translated\"}}, {{\"index\": \"1\", \"content\": \"translated\"}}]}}\n\nInput array to translate:\n{json.dumps(batch, ensure_ascii=False)}"
+        messages.append({"role": "user", "content": current_content})
+
+        done = False
+        retry = -1
+        while done == False:
+            response_text = ""
+            self.translated_batch = []
+            processed = True
+            retry += 1
+            
+            try:
+                # OpenAI API의 출력 토큰 수 설정
+                max_output_tokens = min(4096, self.token_limit // 4)  # 안전한 출력 토큰 수
+                
+                # JSON 스키마 정의 (배열 형태 강제)
+                json_schema = {
+                    "name": "subtitle_translation",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "subtitles": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "index": {"type": "string"},
+                                        "content": {"type": "string"}
+                                    },
+                                    "required": ["index", "content"]
+                                }
+                            }
+                        },
+                        "required": ["subtitles"]
+                    }
+                }
+                
+                # GPT-5 모델은 max_completion_tokens를 사용하고, temperature가 None이면 기본값 1 사용
+                if self.model_name.startswith("gpt-5"):
+                    api_params = {
+                        "model": self.model_name,
+                        "messages": messages,
+                        "max_completion_tokens": max_output_tokens,
+                        "response_format": {"type": "json_schema", "json_schema": json_schema},
+                        "timeout": 60  # 60초 타임아웃
+                    }
+                    # GPT-5에서는 temperature가 None이면 기본값 1을 사용
+                    if self.temperature is not None:
+                        api_params["temperature"] = self.temperature
+                    
+                    response = client.chat.completions.create(**api_params)
+                else:
+                    response = client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        temperature=self.temperature,
+                        max_tokens=max_output_tokens,
+                        response_format={"type": "json_schema", "json_schema": json_schema},
+                        timeout=60  # 60초 타임아웃
+                    )
+                
+                response_text = response.choices[0].message.content
+                if not response_text:
+                    error_with_progress("OpenAI has returned an empty response.")
+                    info_with_progress("Sending last batch again...", isSending=True)
+                    continue
+                
+                # 응답이 너무 짧으면 재시도
+                if len(response_text.strip()) < 10:
+                    error_with_progress(f"OpenAI response too short: '{response_text}'")
+                    info_with_progress("Sending last batch again...", isSending=True)
+                    continue
+                
+                # JSON 파싱 시도
+                try:
+                    parsed_response = json_repair.loads(response_text)
+                    
+                    # JSON 스키마에 따른 응답 처리
+                    if isinstance(parsed_response, dict) and "subtitles" in parsed_response:
+                        # {"subtitles": [...]} 형태 (JSON 스키마 응답)
+                        if isinstance(parsed_response["subtitles"], list):
+                            self.translated_batch: list[SubtitleObject] = parsed_response["subtitles"]
+                        else:
+                            error_with_progress(f"'subtitles' field is not an array. Got: {type(parsed_response['subtitles'])}")
+                            error_with_progress(f"Response content: {response_text[:200]}...")
+                            info_with_progress("Sending last batch again...", isSending=True)
+                            continue
+                    elif isinstance(parsed_response, list):
+                        # 직접 배열 형태
+                        self.translated_batch: list[SubtitleObject] = parsed_response
+                    elif isinstance(parsed_response, dict) and "result" in parsed_response:
+                        # {"result": [...]} 형태인 경우
+                        if isinstance(parsed_response["result"], list):
+                            self.translated_batch: list[SubtitleObject] = parsed_response["result"]
+                        else:
+                            error_with_progress(f"'result' field is not an array. Got: {type(parsed_response['result'])}")
+                            error_with_progress(f"Response content: {response_text[:200]}...")
+                            info_with_progress("Sending last batch again...", isSending=True)
+                            continue
+                    elif isinstance(parsed_response, dict) and "index" in parsed_response and "content" in parsed_response:
+                        # 단일 객체인 경우 배열로 변환
+                        warning_with_progress("Received single object instead of array. Converting to array.")
+                        self.translated_batch: list[SubtitleObject] = [parsed_response]
+                    else:
+                        error_with_progress(f"Response format not recognized. Expected 'subtitles' array or direct array. Got: {type(parsed_response)}")
+                        error_with_progress(f"Response content: {response_text[:200]}...")
+                        info_with_progress("Sending last batch again...", isSending=True)
+                        continue
+                    
+                except Exception as json_error:
+                    error_with_progress(f"JSON parsing error: {json_error}")
+                    error_with_progress(f"Response content: {response_text[:200]}...")
+                    info_with_progress("Sending last batch again...", isSending=True)
+                    continue
+                
+            except Exception as e:
+                error_with_progress(f"OpenAI API error: {e}")
+                info_with_progress("Sending last batch again...", isSending=True)
+                continue
+
+            if len(self.translated_batch) == len(batch):
+                processed = self._process_translated_lines(
+                    translated_lines=self.translated_batch,
+                    translated_subtitle=translated_subtitle,
+                    batch=batch,
+                    finished=True,
+                )
+                if not processed:
+                    info_with_progress("Sending last batch again...", isSending=True)
+                    continue
+                done = True
+                self.batch_number += 1
+            else:
+                if processed:
+                    warning_with_progress(
+                        f"OpenAI has returned an unexpected response. Expected {len(batch)} lines, got {len(self.translated_batch)}."
+                    )
+                info_with_progress("Sending last batch again...", isSending=True)
+                continue
+
+        # OpenAI용 응답 형식으로 변환 (호환성을 위해)
+        previous_content = [
+            types.Content(role="user", parts=[types.Part(text=json.dumps(batch, ensure_ascii=False))]),
+            types.Content(role="model", parts=[types.Part(text=response_text)]),
+        ]
+        batch.clear()
+        return previous_content
+
+    def _get_openai_system_message(self) -> str:
+        """OpenAI용 시스템 메시지 생성"""
+        from .helpers import get_instruction
+        
+        base_instruction = get_instruction(
+            language=self.target_language,
+            thinking=False,  # OpenAI는 thinking 모드 미지원
+            thinking_compatible=False,
+            audio_file=self.audio_file,
+            description=self.description,
+        )
+        
+        # 화자 표기 처리 지시사항 추가
+        speaker_instruction = "\n\nSpeaker handling rules:\n- If the original text contains speaker names followed by a colon (e.g., 'BECCA: See you, sweetheart'), REMOVE the speaker name and colon from the translation.\n- Use the speaker information to determine appropriate honorifics, politeness levels, and relationship context for Korean translation.\n- Example: 'BECCA: See you, sweetheart' → '이따 봐, 아들' (not 'BECCA: 이따 봐, 아들')"
+        
+        # JSON 응답 형식에 대한 명시적 지시 추가
+        json_instruction = "\n\nCRITICAL: You MUST respond with a JSON object containing a 'subtitles' array with ALL subtitle objects. Format: {\"subtitles\": [{\"index\": \"0\", \"content\": \"translated text\"}, {\"index\": \"1\", \"content\": \"translated text\"}]}. Each object must have 'index' and 'content' fields. Return the same number of objects as in the input. Do not include any text outside the JSON object."
+        
+        return base_instruction + speaker_instruction + json_instruction
+
     def _process_translated_lines(
         self,
         translated_lines: list[SubtitleObject],
@@ -843,17 +1144,17 @@ class GeminiSRTTranslator:
         for line in translated_lines:
             if "content" not in line or "index" not in line:
                 if line != last_translated_line or finished:
-                    warning_with_progress(f"Gemini has returned a malformed object for line {int(indexes[i]) + 1}.")
+                    warning_with_progress(f"{self.provider.upper()} has returned a malformed object for line {int(indexes[i]) + 1}.")
                     return False
                 else:
                     continue
             if line["index"] not in indexes:
-                warning_with_progress(f"Gemini has returned an unexpected line: {int(line['index']) + 1}.")
+                warning_with_progress(f"{self.provider.upper()} has returned an unexpected line: {int(line['index']) + 1}.")
                 return False
             if line["content"] == "" and batch[i]["content"] != "":
                 if line != last_translated_line or finished:
                     warning_with_progress(
-                        f"Gemini has returned an empty translation for line {int(line['index']) + 1}."
+                        f"{self.provider.upper()} has returned an empty translation for line {int(line['index']) + 1}."
                     )
                     return False
                 else:

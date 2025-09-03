@@ -57,9 +57,15 @@ def select_model_interactive(available_models: list) -> str:
 
 def cmd_translate(args) -> None:
     """Handle translate command."""
-    # Set API keys
-    gst.gemini_api_key = args.api_key or get_api_key_from_env("GEMINI_API_KEY") or get_api_key_from_input()
-    gst.gemini_api_key2 = args.api_key2 or get_api_key_from_env("GEMINI_API_KEY2")
+    # Set provider
+    gst.provider = args.provider
+    
+    # Set API keys based on provider
+    if args.provider == "gemini":
+        gst.gemini_api_key = args.api_key or get_api_key_from_env("GEMINI_API_KEY") or get_api_key_from_input()
+        gst.gemini_api_key2 = args.api_key2 or get_api_key_from_env("GEMINI_API_KEY2")
+    elif args.provider == "openai":
+        gst.openai_api_key = args.api_key or get_api_key_from_env("OPENAI_API_KEY") or get_api_key_from_input()
 
     # Validate input file
     if args.input_file:
@@ -81,9 +87,15 @@ def cmd_translate(args) -> None:
     # Model selection
     if args.model:
         gst.model_name = args.model
-    elif args.interactive:
+    elif args.interactive and args.provider == "gemini":
         available_models = gst.getmodels()
         gst.model_name = select_model_interactive(available_models)
+    elif not args.model:
+        # Set default models based on provider
+        if args.provider == "gemini":
+            gst.model_name = "gemini-2.5-flash"
+        elif args.provider == "openai":
+            gst.model_name = "gpt-4o"
 
     # Set optional parameters
     if args.output_file:
@@ -155,9 +167,13 @@ def create_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Using environment variable (recommended)
+  # Using Gemini with environment variable (recommended)
     export GEMINI_API_KEY="your_api_key_here"
     gst translate -i subtitle.srt -l French
+
+  # Using OpenAI with environment variable
+    export OPENAI_API_KEY="your_api_key_here"
+    gst translate -i subtitle.srt -l French --provider openai
 
   # Using command line argument
     gst translate -i subtitle.srt -l French -k YOUR_API_KEY
@@ -171,7 +187,7 @@ Examples:
   # Extract and use audio from video for context (requires FFmpeg)
     gst translate -v movie.mp4 -l Spanish --extract-audio
 
-  # Interactive model selection
+  # Interactive model selection (Gemini only)
     gst translate -i subtitle.srt -l "Brazilian Portuguese" --interactive
 
   # Resume translation from a specific line
@@ -180,7 +196,7 @@ Examples:
   # Suppress output
     gst translate -i subtitle.srt -l French --quiet
   
-  # List available models
+  # List available models (Gemini only)
     gst list-models -k YOUR_API_KEY
         """,
     )
@@ -204,7 +220,8 @@ Examples:
     translate_parser.add_argument("-a", "--audio-file", help="Audio file for context")
     translate_parser.add_argument("-s", "--start-line", type=int, help="Starting line number")
     translate_parser.add_argument("-d", "--description", help="Description for translation context")
-    translate_parser.add_argument("-m", "--model", help="Gemini model to use")
+    translate_parser.add_argument("-m", "--model", help="Model to use (Gemini model name or OpenAI model name)")
+    translate_parser.add_argument("--provider", choices=["gemini", "openai"], default="gemini", help="AI provider to use (default: gemini)")
     translate_parser.add_argument("-b", "--batch-size", type=int, help="Batch size for translation")
     translate_parser.add_argument("--temperature", type=float, help="Temperature (0.0-2.0)")
     translate_parser.add_argument("--top-p", type=float, help="Top P (0.0-1.0)")
