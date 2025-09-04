@@ -183,8 +183,8 @@ def translate():
 
     # (Optional) Model name to use for translation
     # Gemini: "gemini-2.5-flash" (default)
-    # OpenAI: "gpt-5" (default)
-    gst.model_name = "gemini-2.5-flash"  # or "gpt-5"
+    # OpenAI: "gpt-5-mini" (default)
+    gst.model_name = "gemini-2.5-flash"  # or "gpt-5-mini"
 
     # (Optional) Batch size for translation (default: 300)
     gst.batch_size = 300

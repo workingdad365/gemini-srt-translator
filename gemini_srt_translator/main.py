@@ -437,9 +437,9 @@ class GeminiSRTTranslator:
                 # OpenAI는 일반적으로 지연이 필요하지 않음
                 delay = False
                 # OpenAI용 배치 크기 조정 (더 안전한 크기)
-                if self.batch_size > 20:
-                    self.batch_size = 20
-                    info(f"OpenAI detected. Adjusting batch size to {self.batch_size} for better stability.")
+                #if self.batch_size > 20:
+                #    self.batch_size = 20
+                #    info(f"OpenAI detected. Adjusting batch size to {self.batch_size} for better stability.")
 
             i = self.start_line - 1
             total = len(original_subtitle)
@@ -724,7 +724,7 @@ class GeminiSRTTranslator:
                 "gpt-4": 8192,
                 "gpt-3.5-turbo": 4096
             }
-            self.token_limit = token_limits.get(self.model_name, 4096)
+            self.token_limit = token_limits.get(self.model_name, 128000)
 
     def _validate_token_size(self, contents: str) -> bool:
         """
@@ -953,21 +953,25 @@ class GeminiSRTTranslator:
                     if content:
                         messages.append({"role": role, "content": content})
         
-        # 현재 배치 메시지 추가 (JSON 형식임을 명시)
-        current_content = f"CRITICAL: You must translate ALL {len(batch)} subtitle objects and return them in the required JSON format with 'subtitles' array. Return format: {{\"subtitles\": [{{\"index\": \"0\", \"content\": \"translated\"}}, {{\"index\": \"1\", \"content\": \"translated\"}}]}}\n\nInput array to translate:\n{json.dumps(batch, ensure_ascii=False)}"
+        # 현재 배치 메시지 추가 (스트리밍 여부에 따라 다른 지시사항)
+        if self.streaming:
+            current_content = f"CRITICAL: You must translate ALL {len(batch)} subtitle objects and return them in the required JSON format with 'subtitles' array. Return ONLY valid JSON, no additional text. Format: {{\"subtitles\": [{{\"index\": \"0\", \"content\": \"translated\"}}, {{\"index\": \"1\", \"content\": \"translated\"}}]}}\n\nInput array to translate:\n{json.dumps(batch, ensure_ascii=False)}"
+        else:
+            current_content = f"CRITICAL: You must translate ALL {len(batch)} subtitle objects and return them in the required JSON format with 'subtitles' array. Return format: {{\"subtitles\": [{{\"index\": \"0\", \"content\": \"translated\"}}, {{\"index\": \"1\", \"content\": \"translated\"}}]}}\n\nInput array to translate:\n{json.dumps(batch, ensure_ascii=False)}"
         messages.append({"role": "user", "content": current_content})
 
         done = False
         retry = -1
         while done == False:
             response_text = ""
+            chunk_size = 0
             self.translated_batch = []
             processed = True
             retry += 1
             
             try:
                 # OpenAI API의 출력 토큰 수 설정
-                max_output_tokens = min(4096, self.token_limit // 4)  # 안전한 출력 토큰 수
+                max_output_tokens = self.token_limit
                 
                 # JSON 스키마 정의 (배열 형태 강제)
                 json_schema = {
@@ -991,83 +995,169 @@ class GeminiSRTTranslator:
                     }
                 }
                 
-                # GPT-5 모델은 max_completion_tokens를 사용하고, temperature가 None이면 기본값 1 사용
-                if self.model_name.startswith("gpt-5"):
-                    api_params = {
-                        "model": self.model_name,
-                        "messages": messages,
-                        "max_completion_tokens": max_output_tokens,
-                        "response_format": {"type": "json_schema", "json_schema": json_schema},
-                        "timeout": 60  # 60초 타임아웃
-                    }
-                    # GPT-5에서는 temperature가 None이면 기본값 1을 사용
-                    if self.temperature is not None:
-                        api_params["temperature"] = self.temperature
-                    
-                    response = client.chat.completions.create(**api_params)
+                # 스트리밍과 JSON schema는 호환되지 않으므로 분기 처리
+                if self.streaming:
+                    # 스트리밍 모드: JSON schema 없이 호출
+                    if self.model_name.startswith("gpt-5"):
+                        api_params = {
+                            "model": self.model_name,
+                            "messages": messages,
+                            "max_completion_tokens": max_output_tokens,
+                            "timeout": 600,
+                            "stream": True
+                        }
+                        if self.temperature is not None:
+                            api_params["temperature"] = self.temperature
+                        response = client.chat.completions.create(**api_params)
+                    else:
+                        response = client.chat.completions.create(
+                            model=self.model_name,
+                            messages=messages,
+                            temperature=self.temperature,
+                            max_tokens=max_output_tokens,
+                            timeout=600,
+                            stream=True
+                        )
                 else:
-                    response = client.chat.completions.create(
-                        model=self.model_name,
-                        messages=messages,
-                        temperature=self.temperature,
-                        max_tokens=max_output_tokens,
-                        response_format={"type": "json_schema", "json_schema": json_schema},
-                        timeout=60  # 60초 타임아웃
-                    )
+                    # 비스트리밍 모드: JSON schema 사용
+                    if self.model_name.startswith("gpt-5"):
+                        api_params = {
+                            "model": self.model_name,
+                            "messages": messages,
+                            "max_completion_tokens": max_output_tokens,
+                            "response_format": {"type": "json_schema", "json_schema": json_schema},
+                            "timeout": 600
+                        }
+                        if self.temperature is not None:
+                            api_params["temperature"] = self.temperature
+                        response = client.chat.completions.create(**api_params)
+                    else:
+                        response = client.chat.completions.create(
+                            model=self.model_name,
+                            messages=messages,
+                            temperature=self.temperature,
+                            max_tokens=max_output_tokens,
+                            response_format={"type": "json_schema", "json_schema": json_schema},
+                            timeout=600
+                        )
                 
-                response_text = response.choices[0].message.content
+                # 스트리밍 처리
+                if self.streaming:
+                    accumulated_chunks = 0
+                    last_valid_batch_size = 0
+                    
+                    for chunk in response:
+                        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
+                            chunk_content = chunk.choices[0].delta.content
+                            response_text += chunk_content
+                            accumulated_chunks += 1
+                            
+                            # 일정 청크마다 JSON 파싱 시도 (너무 자주 파싱하면 성능 저하)
+                            if accumulated_chunks % 5 == 0 or '}' in chunk_content:
+                                try:
+                                    # JSON이 완성되지 않았을 수 있으므로 json_repair 사용
+                                    partial_response = json_repair.loads(response_text)
+                                    if isinstance(partial_response, dict) and "subtitles" in partial_response:
+                                        if isinstance(partial_response["subtitles"], list):
+                                            current_batch_size = len(partial_response["subtitles"])
+                                            
+                                            # 새로운 번역 결과가 추가된 경우에만 업데이트
+                                            if current_batch_size > last_valid_batch_size:
+                                                self.translated_batch = partial_response["subtitles"]
+                                                chunk_size = current_batch_size
+                                                last_valid_batch_size = current_batch_size
+                                                
+                                                # 부분 번역 결과 처리
+                                                processed = self._process_translated_lines(
+                                                    translated_lines=self.translated_batch,
+                                                    translated_subtitle=translated_subtitle,
+                                                    batch=batch,
+                                                    finished=False,
+                                                )
+                                                if not processed:
+                                                    break
+                                                update_loading_animation(chunk_size=chunk_size)
+                                except:
+                                    # JSON이 아직 완성되지 않은 경우 로딩 애니메이션만 업데이트
+                                    update_loading_animation(chunk_size=last_valid_batch_size)
+                    
+                    # 스트리밍 완료 후 최종 JSON 파싱
+                    if response_text:
+                        try:
+                            final_response = json_repair.loads(response_text)
+                            if isinstance(final_response, dict) and "subtitles" in final_response:
+                                if isinstance(final_response["subtitles"], list):
+                                    self.translated_batch = final_response["subtitles"]
+                            elif isinstance(final_response, list):
+                                # 직접 배열 형태인 경우
+                                self.translated_batch = final_response
+                            else:
+                                error_with_progress(f"Unexpected response format in streaming mode: {type(final_response)}")
+                                info_with_progress("Sending last batch again...", isSending=True)
+                                continue
+                        except Exception as e:
+                            error_with_progress(f"Final JSON parsing failed: {e}")
+                            error_with_progress(f"Response content: {response_text[:200]}...")
+                            info_with_progress("Sending last batch again...", isSending=True)
+                            continue
+                else:
+                    # 비스트리밍 모드
+                    response_text = response.choices[0].message.content
+                
                 if not response_text:
                     error_with_progress("OpenAI has returned an empty response.")
                     info_with_progress("Sending last batch again...", isSending=True)
                     continue
                 
                 # 응답이 너무 짧으면 재시도
-                if len(response_text.strip()) < 10:
-                    error_with_progress(f"OpenAI response too short: '{response_text}'")
-                    info_with_progress("Sending last batch again...", isSending=True)
-                    continue
+                # if len(response_text.strip()) < 10:
+                #     error_with_progress(f"OpenAI response too short: '{response_text}'")
+                #     info_with_progress("Sending last batch again...", isSending=True)
+                #     continue
                 
-                # JSON 파싱 시도
-                try:
-                    parsed_response = json_repair.loads(response_text)
-                    
-                    # JSON 스키마에 따른 응답 처리
-                    if isinstance(parsed_response, dict) and "subtitles" in parsed_response:
-                        # {"subtitles": [...]} 형태 (JSON 스키마 응답)
-                        if isinstance(parsed_response["subtitles"], list):
-                            self.translated_batch: list[SubtitleObject] = parsed_response["subtitles"]
+                # 스트리밍이 아닌 경우에만 최종 JSON 파싱 수행
+                if not self.streaming:
+                    # JSON 파싱 시도
+                    try:
+                        parsed_response = json_repair.loads(response_text)
+                        
+                        # JSON 스키마에 따른 응답 처리
+                        if isinstance(parsed_response, dict) and "subtitles" in parsed_response:
+                            # {"subtitles": [...]} 형태 (JSON 스키마 응답)
+                            if isinstance(parsed_response["subtitles"], list):
+                                self.translated_batch: list[SubtitleObject] = parsed_response["subtitles"]
+                            else:
+                                error_with_progress(f"'subtitles' field is not an array. Got: {type(parsed_response['subtitles'])}")
+                                error_with_progress(f"Response content: {response_text[:200]}...")
+                                info_with_progress("Sending last batch again...", isSending=True)
+                                continue
+                        elif isinstance(parsed_response, list):
+                            # 직접 배열 형태
+                            self.translated_batch: list[SubtitleObject] = parsed_response
+                        elif isinstance(parsed_response, dict) and "result" in parsed_response:
+                            # {"result": [...]} 형태인 경우
+                            if isinstance(parsed_response["result"], list):
+                                self.translated_batch: list[SubtitleObject] = parsed_response["result"]
+                            else:
+                                error_with_progress(f"'result' field is not an array. Got: {type(parsed_response['result'])}")
+                                error_with_progress(f"Response content: {response_text[:200]}...")
+                                info_with_progress("Sending last batch again...", isSending=True)
+                                continue
+                        elif isinstance(parsed_response, dict) and "index" in parsed_response and "content" in parsed_response:
+                            # 단일 객체인 경우 배열로 변환
+                            warning_with_progress("Received single object instead of array. Converting to array.")
+                            self.translated_batch: list[SubtitleObject] = [parsed_response]
                         else:
-                            error_with_progress(f"'subtitles' field is not an array. Got: {type(parsed_response['subtitles'])}")
+                            error_with_progress(f"Response format not recognized. Expected 'subtitles' array or direct array. Got: {type(parsed_response)}")
                             error_with_progress(f"Response content: {response_text[:200]}...")
                             info_with_progress("Sending last batch again...", isSending=True)
                             continue
-                    elif isinstance(parsed_response, list):
-                        # 직접 배열 형태
-                        self.translated_batch: list[SubtitleObject] = parsed_response
-                    elif isinstance(parsed_response, dict) and "result" in parsed_response:
-                        # {"result": [...]} 형태인 경우
-                        if isinstance(parsed_response["result"], list):
-                            self.translated_batch: list[SubtitleObject] = parsed_response["result"]
-                        else:
-                            error_with_progress(f"'result' field is not an array. Got: {type(parsed_response['result'])}")
-                            error_with_progress(f"Response content: {response_text[:200]}...")
-                            info_with_progress("Sending last batch again...", isSending=True)
-                            continue
-                    elif isinstance(parsed_response, dict) and "index" in parsed_response and "content" in parsed_response:
-                        # 단일 객체인 경우 배열로 변환
-                        warning_with_progress("Received single object instead of array. Converting to array.")
-                        self.translated_batch: list[SubtitleObject] = [parsed_response]
-                    else:
-                        error_with_progress(f"Response format not recognized. Expected 'subtitles' array or direct array. Got: {type(parsed_response)}")
+                        
+                    except Exception as json_error:
+                        error_with_progress(f"JSON parsing error: {json_error}")
                         error_with_progress(f"Response content: {response_text[:200]}...")
                         info_with_progress("Sending last batch again...", isSending=True)
                         continue
-                    
-                except Exception as json_error:
-                    error_with_progress(f"JSON parsing error: {json_error}")
-                    error_with_progress(f"Response content: {response_text[:200]}...")
-                    info_with_progress("Sending last batch again...", isSending=True)
-                    continue
                 
             except Exception as e:
                 error_with_progress(f"OpenAI API error: {e}")

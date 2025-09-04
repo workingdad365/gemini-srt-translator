@@ -158,7 +158,7 @@ gst translate \
   -k2 YOUR_SECOND_API_KEY \
   -o output_french.srt \
   --model gemini-2.5-pro \
-  --batch-size 150 \
+  --batch-size 300 \
   --temperature 0.7 \
   --description "Medical TV series, use medical terminology" \
   --progress-log \
@@ -218,7 +218,7 @@ gst.translate()
 - `output_file`: Name of the translated file.
 - `start_line`: Starting line for translation.
 - `description`: Description of the translation job.
-- `batch_size`: Batch size (default: 300).
+- `batch_size`: Batch size (default: 150).
 - `free_quota`: Signal GST that you are using a free quota (default: True).
 - `skip_upgrade`: Skip version upgrade check (default: False).
 - `use_colors`: Activate colors in terminal (default: True).
@@ -256,7 +256,7 @@ gst.extract_audio = False
 gst.start_line = 20
 gst.description = "Medical TV series, use medical terms"
 gst.model_name = "gemini-2.5-pro-preview-03-25"
-gst.batch_size = 150
+gst.batch_size = 300
 gst.streaming = True
 gst.thinking = True
 gst.thinking_budget = 4096

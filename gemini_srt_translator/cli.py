@@ -95,7 +95,7 @@ def cmd_translate(args) -> None:
         if args.provider == "gemini":
             gst.model_name = "gemini-2.5-flash"
         elif args.provider == "openai":
-            gst.model_name = "gpt-4o"
+            gst.model_name = "gpt-5-mini"
 
     # Set optional parameters
     if args.output_file:
