@@ -71,7 +71,7 @@ class GeminiSRTTranslator:
         extract_audio: bool = False,
         start_line: int = None,
         description: str = None,
-        model_name: str = "gemini-2.5-flash-preview-05-20",
+        model_name: str = "gemini-2.5-flash",
         batch_size: int = 300,
         streaming: bool = True,
         thinking: bool = True,
