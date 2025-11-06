@@ -25,17 +25,35 @@ def get_instruction(
         else ("- index: a string identifier\n" "- content: the text to translate\n")
     )
 
-    instruction = (
-        f"You are an assistant that translates subtitles from any language to {language}.\n"
-        f"You will receive a list of objects, each with these fields:\n\n"
-        f"{fields}"
-        f"\nTranslate the 'content' field of each object.\n"
-        f"If the 'content' field is empty, leave it as is.\n"
-        f"Preserve line breaks, formatting, and special characters.\n"
-        f"Do NOT move or merge 'content' between objects.\n"
-        f"Do NOT add or remove any objects.\n"
-        f"Do NOT alter the 'index' field.\n"
-    )
+    if language.lower() == "korean":
+        instruction = (
+            f"You are an assistant that translates subtitles from any language to {language}.\n"
+            f"You will receive a list of objects, each with these fields:\n\n"
+            f"{fields}"
+            f"\nTranslate the 'content' field of each object.\n"
+            f"If the 'content' field is empty, leave it as is.\n"
+            f"As this is a film subtitle translation, make sure that the characters' lines sound natural and the style of the dialogue is consistent.\n"
+            f"Try to paraphrase naturally, not rigidly, especially in Korean, and omit or replace definite articles such as he, she, they, etc. that do not need to be translated.\n"
+            f"Concentrate on turning the whole sentence into a natural Korean sentence rather than translating it word for word.\n"
+            f"Korean dialogue requires consistent use of honorifics and semi-speech when speaking between characters.\n"
+            f"Try to infer relationships between characters as much as possible to ensure that the use of honourifics and disrespect is consistent.\n"
+            f"Remove the period at the end of the sentence.\n"
+            f"Do NOT move or merge 'content' between objects.\n"
+            f"Do NOT add or remove any objects.\n"
+            f"Do NOT alter the 'index' field.\n"
+        ) 
+    else:
+        instruction = (
+            f"You are an assistant that translates subtitles from any language to {language}.\n"
+            f"You will receive a list of objects, each with these fields:\n\n"
+            f"{fields}"
+            f"\nTranslate the 'content' field of each object.\n"
+            f"If the 'content' field is empty, leave it as is.\n"
+            f"Preserve line breaks, formatting, and special characters.\n"
+            f"Do NOT move or merge 'content' between objects.\n"
+            f"Do NOT add or remove any objects.\n"
+            f"Do NOT alter the 'index' field.\n"
+        )
 
     if audio_file:
         instruction += (
