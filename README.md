@@ -26,34 +26,42 @@
 - 🎵 **Audio Context**: Extract audio from a video file or provide your own to improve translation accuracy (requires [FFmpeg](https://ffmpeg.org/)).
 - 📜 **Description Support**: Add a description to your translation job to guide the AI in using specific terminology or context.
 - 📋 **List Models**: Easily list all currently available Gemini models to choose the best fit for your needs.
-- 🔄 **Auto-Update**: Keep the tool updated with automatic version checking and update prompts.
+- 🔄 **Manual Update**: Update safely with `pipx upgrade gemini-srt-translator`.
 - 📝 **Logging**: Optional saving of progress and 'thinking' process logs for review.
 
 ---
 
 ## 📦 Installation
 
-### Basic:
+### Recommended: Global command with isolated dependencies (pipx)
 
 ```sh
-pip install --upgrade gemini-srt-translator
+python -m pip install --user pipx
+python -m pipx ensurepath
 ```
 
-### Recommended: Use a Virtual Environment
-
-It's best practice to use a virtual environment. This is especially recommended as gemini-srt-translator installs several dependencies that could potentially conflict with your existing packages:
+Restart your terminal, then install:
 
 ```sh
-# Create a virtual environment
+pipx install gemini-srt-translator
+```
+
+Update:
+
+```sh
+pipx upgrade gemini-srt-translator
+```
+
+### Alternative: Virtual environment
+
+```sh
 python -m venv venv
 
-# Activate the virtual environment
 # On Windows:
 venv\Scripts\activate
 # On macOS/Linux:
 source venv/bin/activate
 
-# Install inside the virtual environment
 pip install --upgrade gemini-srt-translator
 ```
 

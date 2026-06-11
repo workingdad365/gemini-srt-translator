@@ -33,7 +33,6 @@ import os
 
 from .logger import set_quiet_mode
 from .main import GeminiSRTTranslator
-from .utils import upgrade_package
 
 gemini_api_key: str = os.getenv("GEMINI_API_KEY", None)
 gemini_api_key2: str = os.getenv("GEMINI_API_KEY2", None)
@@ -233,13 +232,6 @@ def translate():
         "thoughts_log": thoughts_log,
         "resume": resume,
     }
-
-    if not skip_upgrade:
-        try:
-            upgrade_package("gemini-srt-translator", use_colors=use_colors)
-            raise Exception("Upgrade completed.")
-        except Exception:
-            pass
 
     if quiet:
         set_quiet_mode(quiet)

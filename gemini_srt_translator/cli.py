@@ -114,8 +114,7 @@ def cmd_translate(args) -> None:
         gst.thinking = not args.no_thinking
     if args.paid_quota:
         gst.free_quota = not args.paid_quota
-    if args.skip_upgrade:
-        gst.skip_upgrade = args.skip_upgrade
+    # --skip-upgrade is kept for backward compatibility, but is now a no-op.
     if args.no_colors:
         gst.use_colors = not args.no_colors
     if args.progress_log:
@@ -213,7 +212,12 @@ Examples:
     # Boolean flags
     translate_parser.add_argument("--no-streaming", action="store_true", default=None, help="Disable streaming")
     translate_parser.add_argument("--no-thinking", action="store_true", default=None, help="Disable thinking mode")
-    translate_parser.add_argument("--skip-upgrade", action="store_true", default=None, help="Skip upgrade check")
+    translate_parser.add_argument(
+        "--skip-upgrade",
+        action="store_true",
+        default=None,
+        help="Deprecated: retained for compatibility and ignored",
+    )
     translate_parser.add_argument("--no-colors", action="store_true", default=None, help="Disable colored output")
     translate_parser.add_argument("--progress-log", action="store_true", default=None, help="Enable progress logging")
     translate_parser.add_argument("--thoughts-log", action="store_true", default=None, help="Enable thoughts logging")
